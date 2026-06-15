@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stop Stuffing Your Prompt — Medium paste version</title>
+<!--
+  HOW TO USE THIS FILE (this comment will NOT paste into Medium):
+  1. Open this file in a browser (double-click it).
+  2. Click in the article, press Cmd+A (select all), then Cmd+C (copy).
+  3. In Medium's editor, paste (Cmd+V). Headings, bold, lists, code blocks,
+     blockquotes and links all carry over.
+  4. Tables were converted to code blocks on purpose (Medium has no tables).
+  5. Where you see a grey [IMAGE: ...] box, delete it and upload the named PNG
+     from this docs/ folder using Medium's "+" -> image.
+  6. The first line becomes the Title; the italic line under it, the subtitle.
+-->
+<style>
+  body{max-width:740px;margin:40px auto;padding:0 20px;font:18px/1.7 Georgia,serif;color:#222}
+  h1{font:700 34px/1.2 -apple-system,Helvetica,Arial,sans-serif;margin:.2em 0}
+  h2{font:700 25px/1.3 -apple-system,Helvetica,Arial,sans-serif;margin:1.4em 0 .4em}
+  .dek{font:400 20px/1.4 Georgia,serif;color:#666;font-style:italic;margin:0 0 1em}
+  pre{background:#f3f3f3;border-radius:6px;padding:14px 16px;overflow:auto;
+      font:14px/1.5 "SF Mono",Menlo,Consolas,monospace;color:#111}
+  code{font:14px/1.5 "SF Mono",Menlo,Consolas,monospace;background:#f3f3f3;padding:1px 4px;border-radius:4px}
+  pre code{background:none;padding:0}
+  .img{background:#eee;border:1px dashed #aaa;border-radius:6px;padding:18px;text-align:center;color:#555;font-family:sans-serif;font-size:15px;margin:1.2em 0}
+  blockquote{border-left:3px solid #ccc;margin:1em 0;padding:.2em 0 .2em 16px;color:#555;font-style:italic}
+  hr{border:none;border-top:1px solid #e0e0e0;margin:2em 0}
+  a{color:#1a73e8}
+</style>
+</head>
+<body>
+
+<h1>Stop Stuffing Your Prompt: An Architecture for Scaling LLM Agents</h1>
+<p class="dek">Why “add one more capability” quietly kills your agent — and the progressive-disclosure design that keeps per-request cost flat as you scale.</p>
+
+<p>Every agent starts the same way: one system prompt, a few instructions, a couple of tools. It works. So you add another capability. Then another. Six weeks later your prompt is 6,000 tokens of instructions for forty different jobs, latency is up, the bill is up, and — the part nobody warns you about — the agent is getting <em>worse</em>.</p>
+
+<p>That is not a model problem. It is an architecture problem. This article is the architecture: <strong>skills, a router, a knowledge base, and progressive disclosure.</strong> There’s a runnable demo at the end.</p>
+
+<h2>The real bottleneck is context, not capability</h2>
+
+<p>Here is the naive way to make an agent do more: every new capability adds its instructions to the one big prompt. That gives you a per-request token cost that grows <strong>O(n)</strong> with the number of things the agent <em>can</em> do — even though any single request uses exactly one of them.</p>
+
+<p>You pay for that twice:</p>
+<ol>
+<li><strong>Money and latency.</strong> Every request ships every instruction for every capability. At 40 capabilities you’re sending ~24,000 tokens to answer a question that needs ~600.</li>
+<li><strong>Quality.</strong> This is the one that surprises people. As you pile in instructions, the relevant 3% gets buried in irrelevant text. Signal-to-noise drops, the model loses the thread (“lost in the middle”), and accuracy <em>falls</em> as you add capability. More context is not more capability — past a point it’s less.</li>
+</ol>
+
+<p>So the reframe that fixes everything: <strong>you don’t have a capability problem, you have a context-selection problem.</strong> The goal is never to fit everything into the window. It’s to load only what <em>this</em> request needs.</p>
+
+<h2>Capabilities as software, not as one prompt</h2>
+
+<p>Three primitives. That’s the whole architecture.</p>
+<ul>
+<li><strong>Skill</strong> — a single-responsibility unit. One job, one file: instructions, optional code, and metadata. (<code>generate test cases</code>, <code>write a bug report</code>, <code>triage a flaky test</code>, <code>draft release notes</code>.)</li>
+<li><strong>Router (orchestrator)</strong> — one entry point that reads the request and selects (and sequences) the skills it needs. You never invoke skills by hand.</li>
+<li><strong>Knowledge base (KB)</strong> — shared facts that skills <em>reference</em> instead of inlining (conventions, formats, domain facts).</li>
+</ul>
+
+<p>This is just <strong>separation of concerns + lazy loading</strong>, applied to prompts instead of code. Everything below is the consequence of taking that seriously.</p>
+
+<h2>Anatomy of a skill</h2>
+
+<p>A skill is a markdown file with structured frontmatter:</p>
+
+<pre><code>---
+name: bug-report
+description: Write a structured, triage-ready bug report from a crash or defect.
+when_to_use: User reports a crash, defect, regression, or unexpected behavior.
+keywords: [bug, crash, defect, regression, repro]
+reads: [bug-report-format, project-facts]
+---
+
+# Bug Report
+Convert a raw observation into a report an engineer can act on without follow-up.
+1. Restate the problem: what happened vs. what was expected.
+2. Pin the environment...</code></pre>
+
+<p>Two engineering points that matter more than they look:</p>
+<ul>
+<li><strong>The <code>description</code> is not documentation — it is the routing signal.</strong> At selection time it is often the <em>only</em> thing the router sees about this skill. It must be a precise, discriminative one-liner. Write descriptions for the router, not for a human reading docs.</li>
+<li><strong><code>reads:</code> declares KB dependencies explicitly.</strong> That makes loading deterministic and auditable — you know exactly what context a skill will pull before it runs.</li>
+</ul>
+
+<h2>Progressive disclosure: the mechanism that makes it scale</h2>
+
+<p>This is the core idea. Context loads in <strong>three tiers</strong>:</p>
+
+<pre><code>Tier 1  (always loaded):   every skill's name + description   -> the index
+Tier 2  (on selection):    the chosen skill's full body
+Tier 3  (on demand):       only the KB docs that skill's reads: declares</code></pre>
+
+<ul>
+<li><strong>Tier 1</strong> is the index. A handful of tokens per skill. It is <em>all the router needs</em> to choose, and the only thing whose cost grows with the number of skills.</li>
+<li><strong>Tier 2</strong> loads the chosen skill’s instructions — only after it’s been selected.</li>
+<li><strong>Tier 3</strong> pulls only the KB documents that skill declared — not the whole knowledge base.</li>
+</ul>
+
+<p>The token math, with <code>N</code> skills of average body size <code>S</code> and <code>M</code> KB docs of average size <code>K</code>:</p>
+
+<pre><code>Naive context        ≈  N·S  +  M·K  +  request     (grows with N and M)
+Orchestrated context ≈  N·d  +  1·S  +  ~1.5·K + request
+                          ^ d = a tiny one-line description</code></pre>
+
+<p>The only term in the orchestrated cost that grows with <code>N</code> is the cheap index (<code>N·d</code>). Everything else is constant per request. <strong>Naive is O(n); orchestrated is ~O(1) per request.</strong> Concretely, from the demo:</p>
+
+<pre><code> skills |  naive  | orchestrated | saved
+ -------+---------+--------------+------
+    4   |  2,411  |     817      |  66%
+   10   |  6,028  |     879      |  85%
+   40   | 24,110  |   1,185      |  95%</code></pre>
+
+<p>Adding the 40th skill costs every request <em>one extra description line</em>. Nothing else. And it’s safe for <strong>quality</strong>, not just cost: the model routes over a small, high-signal index, then reasons over only the relevant skill and KB. You’ve converted an O(n) attention problem into an O(1) one.</p>
+
+<div class="img">[IMAGE: architecture-engineering.png — upload here]</div>
+
+<h2>The router: code vs. model, and the tradeoff</h2>
+
+<p>There are two ways to do selection, and the choice is a real engineering decision.</p>
+
+<p><strong>Deterministic (code).</strong> Keyword or embedding similarity over the index. Cheap, fast, debuggable, no extra LLM call. Brittle on phrasing. The demo uses this to stay offline:</p>
+
+<pre><code>def score(request, skill):
+    req = request.lower()
+    s = 0.0
+    for kw in skill.get("keywords", []):
+        if kw.lower() in req:
+            s += 2.0
+    haystack = f"{skill['description']} {skill['when_to_use']}"
+    s += len(words(req) &amp; words(haystack)) * 0.1
+    return s
+
+def route(request, index):
+    return max(index, key=lambda sk: score(request, sk))</code></pre>
+
+<p><strong>Model-based.</strong> One cheap LLM classification call over the Tier-1 index returns the skill(s). Robust to phrasing, handles ambiguity, costs one small call. This is what most production systems use.</p>
+
+<p>The non-negotiable rule either way: <strong>route over the index, never over full skill bodies.</strong> The entire economic argument collapses if you have to load everything to decide what to load. This is also exactly why the index must stay cheap — with a model router you pay to send it on every request.</p>
+
+<p>Once a skill is selected, loading Tiers 2 and 3 is mechanical:</p>
+
+<pre><code>skill   = route(request, index)
+body    = load_skill_body(skill)            # Tier 2
+kb_docs = load_kb(skill["reads"])           # Tier 3 — only what it declares
+context = assemble(index, skill, body, kb_docs, request)</code></pre>
+
+<p><strong>Multi-skill composition.</strong> A request may need a sequence — “investigate this failure, then file a bug” → triage skill, then bug-report skill. The router returns an ordered set; the orchestrator runs them and threads state between them. Keep that composition explicit; implicit chaining is where these systems get unpredictable.</p>
+
+<h2>The knowledge base: DRY for prompts</h2>
+
+<p>Many skills need the same facts — naming conventions, a severity matrix, domain definitions. Inline those into each skill and you get duplication, drift, and bloat. Externalize them into a KB and skills <em>reference</em> them:</p>
+<ul>
+<li>One <strong>single source of truth</strong>; fix a convention once.</li>
+<li>Skills stay small and focused.</li>
+<li>Context stays lean because a skill pulls only the KB slice it declared.</li>
+</ul>
+
+<p>For a large KB, the static <code>reads:</code> dependency becomes a dynamic <strong>retrieval</strong> step — which is just progressive disclosure one level down: skills disclose KB on demand, and retrieval decides which slice. (Yes — your RAG layer <em>is</em> the Tier-3 mechanism.)</p>
+
+<h2>The mental model: it’s an operating system</h2>
+
+<p>This isn’t a cute analogy; it’s the same problem producing the same solution:</p>
+
+<pre><code> OS                  ->  Agent
+ ------------------------------------------
+ Scheduler / kernel  ->  Router
+ Installed programs  ->  Skills
+ Filesystem          ->  Knowledge base
+ Demand paging       ->  Progressive disclosure</code></pre>
+
+<p>An OS doesn’t load every program into RAM at boot. It keeps a table of what’s installed and pages in code on access. Your agent shouldn’t load every instruction into context on every request either. Same constraint (limited fast memory, many programs), same answer (load on demand).</p>
+
+<h2>Where this gets hard (the production realities)</h2>
+
+<p>The architecture is simple. Operating it well is where the engineering lives.</p>
+<ol>
+<li><strong>Routing accuracy is your #1 failure mode.</strong> A mis-route is a wrong skill, which is a wrong answer. Treat the router as a <strong>classifier and eval it</strong> — build a labeled set of <code>request → expected skill(s)</code> and track precision/recall.</li>
+<li><strong>Descriptions <em>are</em> routing accuracy.</strong> Most mis-routes trace back to vague or overlapping descriptions. Iterate them against your router eval, not your aesthetic sense.</li>
+<li><strong>Skill granularity.</strong> Too coarse and skills overlap so the router can’t choose; too fine and you drown in orchestration overhead and brittle chains. One job per skill, and if two always fire together, merge them.</li>
+<li><strong>Composition &amp; state.</strong> Multi-skill flows need a state contract — does the orchestrator pass structured state between skills, or do they share a scratchpad? Make it explicit.</li>
+<li><strong>Know when <em>not</em> to.</strong> Below ~5 skills, the index and routing overhead aren’t worth it — use one prompt. This pattern earns its complexity at scale.</li>
+<li><strong>Security / trust boundary.</strong> If skills or KB content can come from untrusted sources, a crafted description can hijack routing and KB text is untrusted input (prompt injection). Treat your registry as a trust boundary.</li>
+<li><strong>Observability.</strong> Log which skill and which KB docs were loaded per request. That log is simultaneously your debugger and the data you eval the router on.</li>
+</ol>
+
+<h2>How this maps to the tools you already use</h2>
+
+<p>This is not a niche trick — it’s the convergent architecture of modern agent frameworks:</p>
+<ul>
+<li><strong>Claude Agent Skills</strong> — <code>SKILL.md</code> with <code>name</code>/<code>description</code>, metadata always loaded, body and bundled files loaded on demand. This article’s design <em>is</em> that model.</li>
+<li><strong>MCP (Model Context Protocol)</strong> — tools and resources exposed with descriptions; the model selects over those descriptions. A router over an index.</li>
+<li><strong>LangGraph / multi-agent systems</strong> — routing nodes and sub-agents are skills with an orchestrator around them.</li>
+<li><strong>RAG</strong> — the KB tier. Retrieval is dynamic progressive disclosure.</li>
+</ul>
+
+<p>Learn the four primitives — skill, router, KB, progressive disclosure — and you can reason about all of these instead of memorizing each framework’s vocabulary.</p>
+
+<h2>Takeaways</h2>
+<ul>
+<li>Growing one prompt to add capability scales <strong>O(n)</strong> in tokens and <em>degrades</em> quality. It’s the default, and it’s a trap.</li>
+<li><strong>Skills + router + KB + progressive disclosure</strong> makes per-request cost ~<strong>O(1)</strong>: cost, latency, and quality all improve together because they’re all downstream of context size.</li>
+<li><strong>Route over a cheap index; load bodies and KB on demand.</strong> Never load everything to decide what to load.</li>
+<li><strong>Descriptions are routing signal</strong> — write and eval them as such.</li>
+<li><strong>Eval the router like a classifier.</strong> It’s the main thing that breaks.</li>
+<li>It’s <strong>demand paging for prompts.</strong></li>
+</ul>
+
+<hr>
+
+<h2>Run it</h2>
+<p>A ~150-line, zero-dependency demo — one command prints the token comparison and the scaling curve:</p>
+
+<pre><code>git clone https://github.com/vazidmansuri005/skill-orchestrator-demo
+cd skill-orchestrator-demo
+python demo.py "write a bug report for the login crash on staging"
+python demo.py --scale 40</code></pre>
+
+<div class="img">[IMAGE: demo.png — upload here]</div>
+
+<p>→ <a href="https://github.com/vazidmansuri005/skill-orchestrator-demo">github.com/vazidmansuri005/skill-orchestrator-demo</a></p>
+
+</body>
+</html>

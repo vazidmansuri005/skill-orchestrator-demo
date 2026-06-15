@@ -135,4 +135,11 @@ barely moves — that's the property the `--scale` projection demonstrates.
   Tier-1 index — same architecture, smarter matching.
 - The `--scale` table is a *projection* holding average skill/KB size constant,
   not a measurement of 40 real skills.
+
+## Deep dive
+
+A full writeup of the architecture — the token math, the router tradeoffs, and
+the production failure modes — is in [`docs/medium-article.md`](docs/medium-article.md).
+The engineering diagram (request lifecycle + the per-request token budget) is
+[`docs/architecture-engineering.png`](docs/architecture-engineering.png).
 ```
