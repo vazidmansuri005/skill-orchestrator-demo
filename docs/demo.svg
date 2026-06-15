@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="470" viewBox="0 0 1040 470" font-family="'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#c9d1d9">
+  <rect x="0" y="0" width="1040" height="470" rx="12" fill="#0d1117"/>
+  <circle cx="22" cy="22" r="6" fill="#ff5f56"/>
+  <circle cx="42" cy="22" r="6" fill="#ffbd2e"/>
+  <circle cx="62" cy="22" r="6" fill="#27c93f"/>
+  <text x="84" y="27" font-size="13" fill="#8b949e">skill-orchestrator-demo — one router, many skills</text>
+  <line x1="0" y1="44" x2="1040" y2="44" stroke="#21262d" stroke-width="1"/>
+
+  <text x="24" y="82" xml:space="preserve"><tspan fill="#3fb950" font-weight="700">$</tspan> python demo.py <tspan fill="#a5d6ff">"write a bug report for the login crash on staging"</tspan></text>
+  <text x="24" y="130" xml:space="preserve">  Naive (every skill + every KB inline):    2,600 tokens</text>
+  <text x="24" y="156" xml:space="preserve">  Orchestrated (router + only what's used):  1,110 tokens</text>
+  <text x="24" y="182" xml:space="preserve" fill="#3fb950" font-weight="700">  -&gt; 57% fewer tokens for the same answer</text>
+  <text x="24" y="216" xml:space="preserve">  <tspan fill="#58a6ff">Routed to:</tspan>    bug-report  <tspan fill="#8b949e">(1 of 4 skills)</tspan></text>
+  <text x="24" y="242" xml:space="preserve">  <tspan fill="#58a6ff">KB loaded:</tspan>    bug-report-format, project-facts  <tspan fill="#8b949e">(of 4 docs)</tspan></text>
+
+  <text x="24" y="290" xml:space="preserve"><tspan fill="#3fb950" font-weight="700">$</tspan> python demo.py <tspan fill="#a5d6ff">--scale 40</tspan></text>
+  <text x="24" y="332" xml:space="preserve">   skills |   naive | orchestrated | saved</text>
+  <text x="24" y="354" xml:space="preserve">   ------ | ------- | ------------ | -----</text>
+  <text x="24" y="376" xml:space="preserve">        4 |   2,411 |      817     |  66%</text>
+  <text x="24" y="398" xml:space="preserve">       40 |  24,110 |    1,185     |  <tspan fill="#3fb950" font-weight="700">95%</tspan></text>
+  <text x="24" y="436" xml:space="preserve" fill="#8b949e">  # naive grows linearly. orchestrated stays flat — that's the point.</text>
+</svg>

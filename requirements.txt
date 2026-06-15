@@ -1,0 +1,3 @@
+# Optional. The demo runs with zero dependencies (it falls back to a token
+# estimate). Install tiktoken for exact, tokenizer-accurate counts:
+tiktoken>=0.7.0
